@@ -39,16 +39,17 @@ class LLMAgent:
             self.url = f"{self.ollama_base_url}/v1/chat/completions"
             self.model = ollama_model
         
-        # Создаем экземпляры инструментов
+        # Создаем экземпляры инструментов.
+        # audit_logger не упоминается в system-промпте (см. _ask_llm_for_plan),
+        # поэтому LLM не может выбрать его в плане как calculator/web_search —
+        # агент вызывает его напрямую для логирования каждого шага.
         self.tools = {
             "calculator": CalculatorTool(),
             "web_search": WebSearchTool(),
+            "audit_logger": AuditLogger(),
         }
         self.conversation_history = []
-
-        # Аудит-логгер: фиксирует запросы, планы, результаты инструментов
-        # и финальные ответы агента для последующего аудита.
-        self.audit_logger = AuditLogger()
+        self.audit_logger = self.tools["audit_logger"]
     
     def _make_api_request(self, payload: Dict, headers: Optional[Dict] = None) -> Dict:
         """
