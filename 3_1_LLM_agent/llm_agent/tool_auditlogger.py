@@ -1,38 +1,70 @@
 # llm_agent/tool_auditlogger.py
 
-class AuditLoggerTool:
-    """Инструмент для логирования и аудита."""
-    
-    name = "audit_logger"
-    description = "Используется для логирования и аудита действий. Используйте с любыми важными данными, которые нужно зафиксировать."
-    
-    def use(self, expression: str) -> str:
-        """
-        Принимает строку с математическим выражением и возвращает результат.
-        
-        Args:
-            expression (str): Выражение для вычисления, например, "10 * (2 + 3)".
-            
-        Returns:
-            str: Строка с результатом или сообщением об ошибке.
-        """
-        try:
-            node = ast.parse(expression, mode='eval').body
-            result = self._eval_ast_node(node)
-            return f"Результат вычисления '{expression}': {result}"
-        except (ValueError, SyntaxError, TypeError) as e:
-            return f"Ошибка: не могу вычислить выражение '{expression}'. Проверьте синтаксис. Детали: {e}"
+import json
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-    def _eval_ast_node(self, node):
-        """Рекурсивно вычисляет узел AST."""
-        if isinstance(node, ast.Constant): # В Python 3.8+ рекомендуется использовать ast.Constant вместо ast.Num
-            return node.value
-        elif isinstance(node, ast.BinOp): # Бинарная операция (например, 2 + 3)
-            return ALLOWED_OPERATORS[type(node.op)](
-                self._eval_ast_node(node.left),
-                self._eval_ast_node(node.right)
-            )
-        elif isinstance(node, ast.UnaryOp): # Унарная операция (например, -5)
-            return ALLOWED_OPERATORS[type(node.op)](self._eval_ast_node(node.operand))
-        else:
-            raise TypeError(f"Операция {node} не поддерживается")
+
+class AuditLogger:
+    """
+    Логирует действия LLM-агента (запросы пользователя, планы, результаты
+    выполнения инструментов, финальные ответы) в структурированном
+    JSON-формате для последующего аудита.
+    """
+
+    def __init__(self, log_file: Optional[str] = None):
+        """
+        Args:
+            log_file (str, optional): Путь к файлу, в который будет
+                дописываться каждая запись лога (в формате JSON Lines).
+                Если не задан, записи хранятся только в памяти.
+        """
+        self.log_file = log_file
+        self.entries: List[Dict[str, Any]] = []
+
+    def _record(self, event_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Формирует и сохраняет одну запись аудита."""
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": event_type,
+            **data,
+        }
+        self.entries.append(entry)
+        if self.log_file:
+            self._write_to_file(entry)
+        return entry
+
+    def _write_to_file(self, entry: Dict[str, Any]) -> None:
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def log_request(self, query: str) -> Dict[str, Any]:
+        """Логирует входящий запрос пользователя."""
+        return self._record("request", {"query": query})
+
+    def log_plan(self, plan: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Логирует план действий, составленный агентом."""
+        return self._record("plan", {"plan": plan})
+
+    def log_tool_result(self, tool_name: str, tool_input: Any, result: str) -> Dict[str, Any]:
+        """Логирует результат выполнения одного инструмента."""
+        return self._record(
+            "tool_result",
+            {"tool": tool_name, "input": tool_input, "result": result},
+        )
+
+    def log_final_response(self, response: str) -> Dict[str, Any]:
+        """Логирует финальный ответ, отправленный пользователю."""
+        return self._record("final_response", {"response": response})
+
+    def get_log(self) -> List[Dict[str, Any]]:
+        """Возвращает все накопленные записи аудита."""
+        return self.entries
+
+    def to_json(self) -> str:
+        """Сериализует весь накопленный лог в JSON-строку."""
+        return json.dumps(self.entries, ensure_ascii=False, indent=2)
+
+    def clear(self) -> None:
+        """Очищает накопленный в памяти лог."""
+        self.entries = []
